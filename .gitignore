@@ -1,0 +1,6 @@
+.vscode/
+__pycache__/
+all_details_on_articles_todo.txt
+book_to_scrape_env/
+entire_webLibrary_value_todo.txt
+book_to_scrape_analysis.xlsx
