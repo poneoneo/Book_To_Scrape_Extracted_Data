@@ -1,12 +1,16 @@
 import re
-from urllib import request
+import sys
 from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup, ResultSet, Tag
 from pprint import pprint
-from typing import List, Dict
-import time
+from typing import List
+from selectolax.parser import HTMLParser
+import urllib3
+from loguru import logger
 
+logger.remove(0)
+logger.add(sys.stderr,colorize=True)
 
 BASE_URL = "https://books.toscrape.com/index.html"
 
@@ -17,20 +21,27 @@ def get_DOM(base_url = BASE_URL):
         DOM = BeautifulSoup(response.text, "html.parser")
         return DOM
     except requests.exceptions.RequestException as e:
-        print(f"errreur {e}")
+        logger.error(f"An error has occured: {e}")
         raise requests.exceptions.RequestException from e
 DOM = get_DOM()
 
 
+
+def _get_book_id(book_url:str):
+    book_id = re.findall(r'_(\d+)/', book_url)[0]
+    return book_id
+
 def _get_categories(dom_object:BeautifulSoup):
     try:
+        logger.info("Getting all existing categories ...")
         links = dom_object.find('ul', class_='nav nav-list').find('ul').find_all('li')  # type: ignore
     except AttributeError as e:
-        print(f"La balise `ul` ou `li` n'existe pas dans sur la page. {e}")
+        logger.error(f"La balise `ul` ou `li` n'existe pas dans sur la page. {e}")
         raise AttributeError from e
     return links
 
 def build_categories_dictionnary(dom_object:BeautifulSoup =DOM):# -> dict[Any, Any]:
+    logger.info("Building dictionnary of Categories ...")
     links = _get_categories(dom_object)
     categories_dict = {tag.text.strip():tag.find('a')['href'] for tag in links} 
     return categories_dict
@@ -53,6 +64,7 @@ def get_amount_of_books(from_url:str,from_base_url: bool, **kwargs) -> tuple[int
     else:
         response = requests.get(absolute_url)
         response.raise_for_status()
+    logger.info("Getting amount of books and articles ...")
     articles: ResultSet[Tag] = BeautifulSoup(response.text,'html.parser').find_all('article',class_='product_pod')
     return len(articles),articles
 
@@ -80,6 +92,7 @@ def get_worst_rated_books(from_url_page:str = BASE_URL, threshold:int = 1,**kwar
             articles = get_amount_of_books(from_url=absolute_url,from_base_url=False,sess=rq_session)[1]
 
     threshold_str = int_to_string.get(threshold,"One")
+    logger.info("Getting worst rated Books ... ")
     worst_rated_articles:List[Tag] = [article for article in articles if article.select('p.'+threshold_str)]
     
     books = {
@@ -87,10 +100,69 @@ def get_worst_rated_books(from_url_page:str = BASE_URL, threshold:int = 1,**kwar
         }
     return books
 
+# function to get the value of the entire web library 
+# def get_book_to_scrape_value():
+#     total_value = 0
+#     ...
 
-def _get_book_id(book_url:str):
-    book_id = re.findall(r'_(\d+)/', book_url)[0]
-    return book_id
+
+# function to get all details page link of each books and turn it to list
+# next_page = True
+def get_books_details_page_link(url:str=BASE_URL):
+    # pages = details_links
+    response = requests.get(url)
+    tree = HTMLParser(response.content)
+    logger.info(f"Scrapping page at: {url}")
+    targeted_articles = tree.css("article.product_pod")
+    # logger.info("Getting details page links of each books in current page ...")
+    for article in targeted_articles:
+        link = article.css_first("a").attributes['href'] 
+        yield link
+    # logger.info("Get next page")
+    next_page = get_next_page_url(tree=tree)
+    # print(pages)
+    if next_page !=None:
+        next_page = urljoin("https://books.toscrape.com/catalogue/",next_page)
+        for link in get_books_details_page_link(next_page):
+            yield link
+    else:
+        logger.success("All page has bee scraped")
+        return None
+
+# function to get the next page link
+def get_next_page_url(tree: HTMLParser):
+    try:
+        next_page:str|None= tree.css_first('li.next').css_first('a').attributes['href']
+    except AttributeError as exc:
+        # logger.error("There are no other page to scrape or Something went wrong with your css querry, next_page has returned None as value ")
+        # raise AttributeError from exc
+        return None
+    if next_page != None and "/" in next_page:
+        next_page = next_page.split('/')[1] 
+    if next_page is None:
+        raise Exception("Something went wrong with your css querry, next_page has returned None as value ")
+    # logger.info("Go to the next page ...")
+    return next_page
+
+# function to get book's price 
+def get_book_price(tree: HTMLParser):
+    article = tree.css_first("article") 
+    return article.css_first('p.price_color').text()[1:]
+
+def get_book_title(tree: HTMLParser):
+    title = tree.css_first('h1').text()
+    return title
+    pass
+# function to get amount of book in stock
+def get_in_stock(tree: HTMLParser):
+    in_stock = tree.css_first('p.instock.availability').text()
+    in_stock:str = in_stock.split('available')[0].split('(')[1]
+    return in_stock
+
+# function to get the value of this books based on the amount in stock
+def in_stock_book_value():
+    pass
+
 
 
 
